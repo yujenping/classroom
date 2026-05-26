@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <title>數位木馬屠城記 - 講師主控台與大螢幕</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+    <style>
+        body { background-color: #0a192f; color: #ccd6f6; }
+        .neon-border { border: 2px solid #64ffda; }
+        .bar-fill { transition: width 0.5s ease-out; }
+    </style>
+</head>
+<body class="p-8">
+
+    <div class="flex justify-between items-center mb-8 border-b border-[#233554] pb-4">
+        <div>
+            <h1 class="text-3xl font-bold text-[#64ffda]">數位木馬屠城記：大螢幕開票系統</h1>
+            <p class="text-sm text-[#8892b0]">行為經濟學現場實驗工具</p>
+        </div>
+        <div class="space-x-2 bg-[#112240] p-2 rounded-lg">
+            <button onclick="setExp('waiting')" class="bg-gray-700 px-4 py-2 rounded text-white text-sm">暫停/等待</button>
+            <button onclick="setExp('exp1')" class="bg-teal-600 px-4 py-2 rounded text-white text-sm font-bold">實驗 1 (A/B分組)</button>
+            <button onclick="setExp('exp2')" class="bg-blue-600 px-4 py-2 rounded text-white text-sm font-bold">實驗 2 (誘餌)</button>
+            <button onclick="setExp('exp3')" class="bg-purple-600 px-4 py-2 rounded text-white text-sm font-bold">實驗 3 (沉沒成本)</button>
+            <button onclick="resetResults()" class="bg-red-900 px-4 py-2 rounded text-white text-sm">清空數據</button>
+        </div>
+    </div>
+
+    <div id="display-area" class="grid grid-cols-2 gap-8">
+        <div class="bg-[#112240] p-6 rounded-xl border border-[#233554]">
+            <h2 class="text-2xl font-bold text-yellow-400 mb-6 border-b border-yellow-400/20 pb-2">實驗組 (A組或通用結果)</h2>
+            <div id="chart-A" class="space-y-6"></div>
+        </div>
+
+        <div class="bg-[#112240] p-6 rounded-xl border border-[#233554]">
+            <h2 class="text-2xl font-bold text-pink-400 mb-6 border-b border-pink-400/20 pb-2">對照組 (B組數據)</h2>
+            <div id="chart-B" class="space-y-6"></div>
+        </div>
+    </div>
+
+    <script>
+        // 初始化 Firebase (配置需與 index.html 完全一致)
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
+const firebaseConfig = {
+  apiKey: "AIzaSyAW8ECm1TXHG_vOT3Q_9WkNMJAfgfYtaxk",
+  authDomain: "classroom2-18a0b.firebaseapp.com",
+  databaseURL: "https://classroom2-18a0b-default-rtdb.firebaseio.com",
+  projectId: "classroom2-18a0b",
+  storageBucket: "classroom2-18a0b.firebasestorage.app",
+  messagingSenderId: "1057562658414",
+  appId: "1:1057562658414:web:dff59c17be75d3e1d2487f",
+  measurementId: "G-HXW5G00TCN"
+        };
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+
+        // 題目文字對照表（供大螢幕顯示用）
+        const expLabels = {
+            exp1: { A: ["方案甲：300元買斷", "方案乙：試玩後付330元"], B: ["方案甲：300元買斷", "方案乙：試玩後付300元"] },
+            exp2: { A: ["方案 A (純數位500)", "方案 B (純紙本1200)", "方案 C (合訂版1200)"], B: ["方案 A (純數位500)", "方案 B (純紙本1200)", "方案 C (合訂版1200)"] },
+            exp3: { A: ["會，再買一張", "不會，不看了"], B: ["會，再買一張", "不會，不看了"] }
+        };
+
+        // 切換題目函數
+        function setExp(expId) {
+            db.ref('currentStatus').set({ activeExp: expId });
+        }
+
+        // 清空票數函數
+        function resetResults() {
+            if(confirm("確定要清空所有投票數據嗎？")) {
+                db.ref('results').remove();
+            }
+        }
+
+        // 實時監聽票數並渲染長條圖
+        db.ref('results').on('value', (snapshot) => {
+            const results = snapshot.val() || {};
+            
+            // 讀取當前啟動哪一題
+            db.ref('currentStatus/activeExp').once('value', (statusSnap) => {
+                const activeExp = statusSnap.val();
+                if(!activeExp || activeExp === 'waiting') {
+                    document.getElementById('chart-A').innerHTML = "<p class='text-[#8892b0]'>等待講師啟動實驗...</p>";
+                    document.getElementById('chart-B').innerHTML = "<p class='text-[#8892b0]'>等待講師啟動實驗...</p>";
+                    return;
+                }
+
+                const expData = results[activeExp] || {};
+                renderGroupChart('A', expData.A || {}, expLabels[activeExp].A);
+                renderGroupChart('B', expData.B || {}, expLabels[activeExp].B);
+            });
+        });
+
+        function renderGroupChart(group, groupData, labels) {
+            const container = document.getElementById('chart-' + group);
+            container.innerHTML = "";
+
+            // 計算該組總票數
+            let totalVotes = 0;
+            labels.forEach((_, i) => { totalVotes += (groupData['opt' + i] || 0); });
+
+            labels.forEach((labelText, i) => {
+                const votes = groupData['opt' + i] || 0;
+                const percent = totalVotes > 0 ? Math.round((votes / totalVotes) * 100) : 0;
+
+                const row = document.createElement('div');
+                row.className = "space-y-2";
+                row.innerHTML = `
+                    <div class="flex justify-between text-sm">
+                        <span class="font-medium text-white">${labelText}</span>
+                        <span class="text-[#64ffda] font-bold">${votes} 票 (${percent}%)</span>
+                    </div>
+                    <div class="w-full bg-[#172a45] h-6 rounded-full overflow-hidden">
+                        <div class="bar-fill h-full rounded-full ${group === 'A' ? 'bg-gradient-to-r from-yellow-400 to-amber-500' : 'bg-gradient-to-r from-pink-500 to-rose-600'}" style="width: ${percent}%"></div>
+                    </div>
+                `;
+                container.appendChild(row);
+            });
+        }
+    </script>
+</body>
+</html>
